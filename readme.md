@@ -1,300 +1,397 @@
-# JWT Authentication System Documentation
+# Next.js JWT Authentication Client
 
-## Overview
+This client application demonstrates JWT authentication implementation in a Next.js React application. It provides a complete authentication flow including login, automatic token refresh, protected routes, and logout functionality.
 
-This document provides a comprehensive explanation of the JWT (JSON Web Token) authentication system implemented in this application. The system is designed to handle user authentication using a combination of AccessToken and RefreshToken, providing secure and efficient API access with automatic token renewal.
+## Architecture Overview
 
-## Table of Contents
-1. [Architecture](#architecture)
-2. [Token Management](#token-management)
-3. [Authentication Flow](#authentication-flow)
-4. [Token Renewal Mechanism](#token-renewal-mechanism)
-5. [API Request Handling](#api-request-handling)
-6. [Component Communication](#component-communication)
-7. [Security Considerations](#security-considerations)
-8. [Testing and Debugging](#testing-and-debugging)
+```mermaid
+graph TD
+    subgraph "Pages"
+        PAGE[Page Components]
+    end
+    
+    subgraph "Components"
+        AC[Auth Components]
+        APIC[API Components]
+    end
+    
+    subgraph "Auth Context"
+        AUTH[AuthContext Provider]
+    end
+    
+    subgraph "Auth Library"
+        ALIB[Authentication Functions]
+        APILIB[API Functions]
+    end
+    
+    subgraph "Backend API"
+        API[Spring Boot Auth Service]
+    end
+    
+    PAGE --> AC
+    PAGE --> AUTH
+    AC --> AUTH
+    AUTH --> ALIB
+    ALIB --> API
+    APIC --> APILIB
+    APILIB --> API
+```
 
-## Architecture
-
-The JWT authentication system follows a layered architecture with clear separation of concerns:
-
-### Core Components:
-
-1. **Auth Utilities (`auth.ts`):**
-   - Responsible for token generation, validation, and decoding
-   - Handles test login and token refresh functionality
-   - Provides utilities for calculating token expiration times
-
-2. **Auth Context (`AuthContext.tsx`):**
-   - Implements React Context for global authentication state management
-   - Manages tokens and user information across the application
-   - Handles periodic token checks and automatic refreshes
-   - Provides authentication hooks for components
-
-3. **API Test Utilities (`apiTest.ts`):**
-   - Simulates API endpoints with varying security requirements
-   - Implements token validation and auto-refresh during API calls
-   - Provides detailed responses with token refresh status
-
-4. **UI Components:**
-   - Authentication buttons for login/logout functionality
-   - API test buttons for demonstrating token usage
-   - Real-time token status display
-
-### Data Flow Diagram:
+## Project Structure
 
 ```
-┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-│               │       │               │       │               │
-│  Auth Utils   │◄─────►│  Auth Context │◄─────►│  UI Components│
-│   (auth.ts)   │       │(AuthContext.tsx)      │(AuthButtons/  │
-│               │       │               │       │ApiTestButtons)│
-└───────┬───────┘       └───────────────┘       └───────────────┘
-        │                                               ▲
-        │                                               │
-        │                      ┌───────────────┐        │
-        └────────────────────►│  API Test     │────────┘
-                              │  (apiTest.ts) │
-                              │               │
-                              └───────────────┘
+auth-service-client/
+├── app/
+│   ├── api/
+│   │   └── ...               # API route handlers (if needed)
+│   ├── components/
+│   │   ├── auth/
+│   │   │   ├── AuthButtons.tsx    # Login/Logout buttons
+│   │   │   ├── AuthContext.tsx    # Authentication context provider
+│   │   │   └── ...
+│   │   └── ...
+│   ├── lib/
+│   │   ├── apiTest.ts        # Functions for testing API endpoints
+│   │   └── auth.ts           # Authentication utility functions
+│   ├── types/
+│   │   └── auth.ts           # TypeScript definitions for auth
+│   ├── globals.scss          # Global styles
+│   ├── layout.tsx            # Root layout component
+│   ├── page.module.scss      # Page-specific styles
+│   └── page.tsx              # Main page component
+├── public/
+│   └── ...                   # Static assets
+├── next.config.js            # Next.js configuration
+├── package.json              # Project dependencies
+└── ...
+```
+
+## Authentication Flow
+
+### Login Process
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as User Interface
+    participant Context as Auth Context
+    participant Storage as Local Storage
+    participant API as Backend API
+    
+    User->>UI: Enter credentials
+    UI->>Context: Call login(email, password)
+    Context->>API: POST /api/auth/login
+    API-->>Context: Return user data and tokens
+    Context->>Storage: Store tokens
+    Context->>Context: Update auth state
+    Context-->>UI: Update UI components
+    UI-->>User: Show authenticated state
+```
+
+### Token Refresh Process
+
+```mermaid
+sequenceDiagram
+    participant Context as Auth Context
+    participant Storage as Local Storage
+    participant API as Backend API
+    
+    Note over Context: Detect expired access token
+    Context->>Storage: Get refresh token
+    Context->>API: POST /api/auth/refresh
+    API-->>Context: Return new token pair
+    Context->>Storage: Update stored tokens
+    Context->>Context: Update auth state
+```
+
+### Automatic Token Refresh Triggers
+
+```mermaid
+graph TD
+    subgraph "Token Refresh Triggers"
+        A[Page Load/Refresh] --> |Check token expiry| D{Token expired?}
+        B[Timer Interval Check] --> |Every 15s| D
+        C[API Call Error 401] --> D
+        D --> |Yes| E[Trigger Token Refresh]
+        D --> |No| F[Continue with valid token]
+    end
+```
+
+### Protected Route Access
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Page as Page Component
+    participant Context as Auth Context
+    participant API as Backend API
+    
+    User->>Page: Access protected page
+    Page->>Context: Check isAuthenticated
+    alt Not authenticated
+        Context-->>Page: Return false
+        Page-->>User: Redirect to login
+    else Authenticated
+        Context-->>Page: Return true
+        Page->>API: Call protected API with token
+        API-->>Page: Return protected data
+        Page-->>User: Display protected content
+    end
+```
+
+## Key Components
+
+### AuthContext.tsx
+
+The central authentication management component that:
+- Provides authentication state to the entire application
+- Manages tokens in localStorage
+- Handles login, logout and token refresh
+- Automatically refreshes tokens when needed
+- Exposes authentication state and functions to other components
+
+```typescript
+// Simplified example
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  isAuthenticated: false,
+  loading: true,
+  login: async () => {},
+  logout: () => {},
+  tokens: null,
+  setTokens: () => {}
+});
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [tokens, setTokens] = useState(null);
+  
+  // Authentication methods...
+  
+  // Load auth state from storage
+  useEffect(() => {
+    // Implementation...
+  }, []);
+  
+  // Token refresh timer
+  useEffect(() => {
+    // Implementation...
+  }, [tokens]);
+  
+  return (
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, ... }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+```
+
+### auth.ts Library
+
+Handles all API communication with the authentication backend:
+
+```typescript
+// Key functions in auth.ts:
+
+// Decode JWT payload
+export const decodeJwt = (token: string): JwtPayload => {
+  // Implementation...
+};
+
+// Login API call
+export const loginTest = async (credentials: LoginCredentials): Promise<AuthResponse> => {
+  // Implementation...
+};
+
+// Token refresh API call
+export const refreshTestToken = async (refreshToken: string): Promise<AuthTokens> => {
+  // Implementation...
+};
+
+// Logout API call
+export const logoutTest = async (accessToken: string, userId: string): Promise<void> => {
+  // Implementation...
+};
+
+// Calculate remaining time for token
+export const getRemainingTime = (token: string): number => {
+  // Implementation...
+};
+```
+
+## User Authentication States
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unauthenticated
+    Unauthenticated --> Authenticating: Login Attempt
+    Authenticating --> Authenticated: Login Success
+    Authenticating --> Unauthenticated: Login Failed
+    Authenticated --> TokenRefreshing: Token Expired
+    TokenRefreshing --> Authenticated: Refresh Success
+    TokenRefreshing --> Unauthenticated: Refresh Failed
+    Authenticated --> Unauthenticated: Logout
 ```
 
 ## Token Management
 
-The system employs two types of tokens:
+### Token Storage
 
-### AccessToken:
-- Short-lived (30 seconds in test mode)
-- Used for authenticating API requests
-- Contains user identity and role information
-- Automatically refreshed when nearing expiration
+Tokens are stored in browser's localStorage:
 
-### RefreshToken:
-- Longer-lived (1 minute in test mode)
-- Used only for obtaining new AccessTokens
-- Stored alongside AccessToken
-- Requires re-login when expired
+```typescript
+// Storage keys
+const ACCESS_TOKEN_KEY = 'access_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
+const USER_KEY = 'auth_user';
 
-### Token Structure:
-Each JWT token consists of three parts:
-1. **Header:** Contains token type and signing algorithm
-   ```json
-   {
-     "alg": "HS256",
-     "typ": "JWT"
-   }
+// Store tokens
+localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+localStorage.setItem(USER_KEY, JSON.stringify(userData));
+
+// Retrieve tokens
+const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+```
+
+### Token Refresh Logic
+
+The client automatically refreshes tokens in several ways:
+
+1. **Periodic checking**: Every 15 seconds, the system checks if the access token will expire within 10 seconds
+   ```typescript
+   const TOKEN_REFRESH_INTERVAL = 15 * 1000;  // 15 seconds
+   const TOKEN_REFRESH_THRESHOLD = 10;        // 10 seconds threshold
    ```
 
-2. **Payload:** Contains claims about the user
-   ```json
-   {
-     "sub": "1",              // User ID
-     "email": "test@example.com",
-     "name": "Test User",
-     "role": "user",
-     "iat": 1615480215,       // Issued at timestamp
-     "exp": 1615480245        // Expiration timestamp
-   }
+2. **Page load/refresh**: On page load, checks if access token is expired but refresh token is valid
+
+3. **Failed API calls**: If an API call returns 401, attempts token refresh before retrying
+
+## API Access Implementation
+
+Protected API calls are made using the access token from the auth context:
+
+```typescript
+// Example of using access token for API calls
+const callProtectedApi = async () => {
+  const { tokens } = useAuth();
+  
+  if (!tokens?.accessToken) {
+    return { error: 'Not authenticated' };
+  }
+  
+  try {
+    const response = await fetch('http://localhost:8080/api/protected', {
+      headers: {
+        'Authorization': `Bearer ${tokens.accessToken}`
+      }
+    });
+    
+    if (response.status === 401) {
+      // Token expired, handle refresh
+    }
+    
+    return await response.json();
+  } catch (error) {
+    // Error handling
+  }
+};
+```
+
+## Type Definitions
+
+Key TypeScript interfaces used in the authentication system:
+
+```typescript
+// Auth types
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+}
+
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface AuthResponse {
+  user: User;
+  tokens: AuthTokens;
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface JwtPayload {
+  sub: string;
+  email?: string;
+  name?: string;
+  role?: string;
+  iat: number;
+  exp: number;
+}
+```
+
+## How to Run
+
+### Prerequisites
+
+- Node.js 16.8+ (Next.js requirement)
+- npm or yarn
+- Backend service running (see backend README)
+
+### Installation
+
+1. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn install
    ```
 
-3. **Signature:** Ensures token integrity (simplified in test implementation)
+2. Run the development server:
+   ```bash
+   npm run dev
+   # or
+   yarn dev
+   ```
 
-## Authentication Flow
+3. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### Login Process:
-1. User submits credentials (email/password)
-2. `login()` function in AuthContext is called
-3. Credentials are validated against test data
-4. Upon successful authentication:
-   - AccessToken and RefreshToken are generated
-   - Tokens are stored in LocalStorage
-   - User information is extracted from token and stored
-   - AuthContext state is updated, triggering UI re-renders
-   - Timer for token checks is initiated
+## Usage
 
-### Sequence Diagram - Login:
-```
-┌─────┐          ┌─────────────┐          ┌──────────┐          ┌────────────┐
-│ UI  │          │ AuthContext │          │ auth.ts  │          │ LocalStorage│
-└──┬──┘          └──────┬──────┘          └────┬─────┘          └─────┬──────┘
-   │                    │                      │                      │
-   │ login(email, pwd)  │                      │                      │
-   ├───────────────────►│                      │                      │
-   │                    │ loginTest(creds)     │                      │
-   │                    ├─────────────────────►│                      │
-   │                    │                      │                      │
-   │                    │  {user, tokens}      │                      │
-   │                    │◄─────────────────────┤                      │
-   │                    │                      │                      │
-   │                    │ updateTokens()       │                      │
-   │                    ├┐                     │                      │
-   │                    ││ setTokens()         │                      │
-   │                    ││ setUser()           │                      │
-   │                    ││                     │          save tokens │
-   │                    ││                     │                      │
-   │                    │└──────────────────────────────────────────►│
-   │ UI updates         │                      │                      │
-   │◄───────────────────┤                      │                      │
-   │                    │                      │                      │
-```
+### Login
 
-### Logout Process:
-1. User clicks logout button
-2. `logout()` function in AuthContext is called
-3. User data and tokens are cleared from state
-4. Token data is removed from LocalStorage
-5. UI updates to reflect logged-out state
+Use the test credentials to log in:
+- Email: test@example.com
+- Password: password
 
-## Token Renewal Mechanism
+### Testing Protected Routes
 
-The system includes two complementary token renewal mechanisms:
+After logging in, you can:
+1. Access the protected API endpoint
+2. View your user profile
+3. Test the admin-only route (requires admin role)
 
-### 1. Proactive Renewal (Timer-based):
-- A timer runs every 15 seconds to check token status
-- If AccessToken has less than 10 seconds remaining:
-  - RefreshToken is used to obtain new tokens
-  - New tokens replace old ones in state and storage
-  - UI automatically updates to show new expiration times
+### Testing Token Refresh
 
-### 2. Reactive Renewal (API Request-based):
-- When making API requests, token validity is checked
-- If AccessToken is expired but RefreshToken is valid:
-  - New tokens are obtained automatically
-  - Original API request is retried with new token
-  - UI is updated with new token information
-  - Response indicates that tokens were refreshed
-
-### Sequence Diagram - API Call with Token Renewal:
-```
-┌─────┐          ┌───────────┐          ┌──────────┐          ┌────────────┐
-│ UI  │          │ apiTest.ts│          │ auth.ts  │          │AuthContext │
-└──┬──┘          └─────┬─────┘          └────┬─────┘          └─────┬──────┘
-   │ callAPI()         │                      │                      │
-   ├──────────────────►│                      │                      │
-   │                   │ verifyJwt(token)     │                      │
-   │                   ├─────────────────────►│                      │
-   │                   │                      │                      │
-   │                   │ token expired        │                      │
-   │                   │◄─────────────────────┤                      │
-   │                   │                      │                      │
-   │                   │ refreshToken()       │                      │
-   │                   ├─────────────────────►│                      │
-   │                   │                      │                      │
-   │                   │ new tokens           │                      │
-   │                   │◄─────────────────────┤                      │
-   │                   │                      │                      │
-   │                   │ retry API call       │                      │
-   │                   ├┐                     │                      │
-   │                   ││                     │                      │
-   │                   │└────────────────────►│                      │
-   │                   │                      │                      │
-   │                   │ API response         │                      │
-   │                   │◄─────────────────────┤                      │
-   │                   │                      │                      │
-   │ response + tokens │                      │                      │
-   │◄──────────────────┤                      │                      │
-   │                   │                      │                      │
-   │ setTokens()       │                      │                      │
-   ├────────────────────────────────────────────────────────────────►│
-   │                   │                      │                      │
-   │ UI updates        │                      │                      │
-   │◄────────────────────────────────────────────────────────────────┤
-```
-
-## API Request Handling
-
-The application simulates three types of API endpoints to demonstrate different authentication scenarios:
-
-1. **Public Endpoint:**
-   - No authentication required
-   - Accessible to all users regardless of login status
-   - Always returns success with public data
-
-2. **Protected Endpoint:**
-   - Requires valid AccessToken
-   - Performs token validation before processing
-   - Automatically refreshes token if expired
-   - Returns protected data on success
-
-3. **Admin Endpoint:**
-   - Requires valid AccessToken with admin privileges
-   - Performs both token validation and role-based authorization
-   - Simulates permission checks (randomly succeeds/fails for testing)
-   - Returns admin data on success
-
-### API Request Flow:
-1. Component calls `callTestApi()` with endpoint type and tokens
-2. Function checks if authentication is required for the endpoint
-3. If required, AccessToken is validated
-4. If AccessToken is invalid/expired:
-   - RefreshToken is checked and used if valid
-   - New tokens are obtained and original request is retried
-   - Response includes both API result and token refresh status
-5. Component receives response and updates UI
-6. If tokens were refreshed, AuthContext is updated
-
-## Component Communication
-
-The system uses React Context API for state management and component communication:
-
-### AuthContext:
-- Provides global authentication state to all components
-- Offers methods for login, logout, and token management
-- Exposes the `useAuth()` hook for components to access auth state
-- Handles token persistence through LocalStorage
-
-### Token State Updates:
-- UI components display real-time token status
-- Token timers update every second, showing remaining validity
-- When tokens change (login, refresh, logout), all components re-render
-- External events triggering token updates (API calls) properly propagate to UI
-
-### External Token Updates:
-When API calls result in token refresh, a special mechanism ensures Context state is updated:
-1. API returns refreshed tokens in response
-2. Component receives tokens and calls `setTokens()` from AuthContext
-3. AuthContext updates its state and LocalStorage
-4. All components using the AuthContext re-render with new token information
+1. Login to get an initial token
+2. The access token will automatically refresh in the background
+3. You can observe token refresh behavior in the browser console
 
 ## Security Considerations
 
-While this implementation is primarily for testing and demonstration, it incorporates several security best practices:
+For a production application, consider:
 
-### 1. Token Expiration:
-- Short-lived AccessTokens minimize the window for token misuse
-- Automatic refresh mechanism prevents user experience disruption
-
-### 2. Token Validation:
-- Tokens are validated before use in API requests
-- Expired tokens are rejected and refreshed when possible
-
-### 3. Separation of Tokens:
-- AccessToken for regular API requests
-- RefreshToken only used for obtaining new tokens
-
-### 4. Production Recommendations:
-- Use HttpOnly cookies instead of LocalStorage for token storage
-- Implement CSRF protection mechanisms
-- Apply proper HTTPS and secure cookie settings
-- Apply signature verification for tokens
-- Add rate limiting for authentication endpoints
-
-## Testing and Debugging
-
-The system includes extensive logging and visualization tools for testing and debugging:
-
-### Console Logging:
-- Every authentication action is logged to the console
-- Token generation, validation, and refresh operations are recorded
-- API calls and token checks are documented
-- Timestamps and remaining validity periods are displayed
-
-### UI Visualization:
-- Real-time token status display with countdown timers
-- Color-coded indicators for valid/expired tokens
-- Explicit notification when tokens are refreshed during API calls
-- API response display showing success/failure and data/errors
-
----
-
-This implementation provides a complete JWT authentication system with automatic token refresh, emphasizing both security and user experience. While simplified for demonstration, it follows the core principles of proper JWT implementation and can be extended for production use with the recommended security enhancements. 
+1. **XSS Protection**: Consider using httpOnly cookies for token storage when possible
+2. **Token Security**: Validate tokens and their expiration on the client side
+3. **Error Handling**: Implement clear error messages for authentication failures
+4. **Session Management**: Add idle timeout for inactive users
+5. **Secure Routes**: Ensure all protected routes check authentication state
+6. **Secure API Calls**: Add timeout and retry logic for API calls 
